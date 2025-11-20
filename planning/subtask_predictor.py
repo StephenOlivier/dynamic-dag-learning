@@ -88,9 +88,9 @@ class SubtaskPredictor:
     ) -> Subtask:
         """增强子任务的依赖关系 - 支持多依赖"""
         # 如果LLM生成的依赖列表为空或只包含最后一个任务，尝试添加更多依赖
-        if not subtask.dependencies or (len(subtask.dependencies) == 1 and
-                                        subtask.dependencies[0] == list(current_dag.nodes.keys())[
-                                            -1] if current_dag.nodes else None):
+        last_task_id = list(current_dag.nodes.keys())[-1] if current_dag.nodes else None
+        if not subtask.dependencies or (len(subtask.dependencies) == 1 and 
+                                        subtask.dependencies[0] == last_task_id):
 
             # 根据任务类型确定可能的依赖
             possible_dependencies = []
@@ -99,7 +99,7 @@ class SubtaskPredictor:
                 # 实现任务可以依赖设计和环境准备
                 if subtask.task_type == "implementation":
                     for node_id, node in current_dag.nodes.items():
-                        if node.task_type in ["design", "environment_setup"]:
+                        if node.task_type in ["design", "environment_setup", "requirements"]:
                             possible_dependencies.append(node_id)
 
                 # 测试任务可以依赖实现和文档
@@ -112,21 +112,43 @@ class SubtaskPredictor:
                 # 建模任务可以依赖EDA和数据准备
                 if subtask.task_type == "modeling":
                     for node_id, node in current_dag.nodes.items():
-                        if node.task_type in ["eda", "data_preparation"]:
+                        if node.task_type in ["eda", "data_preparation", "feature_engineering"]:
                             possible_dependencies.append(node_id)
 
-                # 报告任务可以依赖建模和可视化
+                # 可视化任务可以依赖EDA和建模
+                elif subtask.task_type == "visualization":
+                    for node_id, node in current_dag.nodes.items():
+                        if node.task_type in ["eda", "modeling", "data_preparation"]:
+                            possible_dependencies.append(node_id)
+
+                # 报告任务可以依赖建模、可视化和EDA
                 elif subtask.task_type == "reporting":
                     for node_id, node in current_dag.nodes.items():
-                        if node.task_type in ["modeling", "visualization"]:
+                        if node.task_type in ["modeling", "visualization", "eda"]:
                             possible_dependencies.append(node_id)
 
-            # 添加多个依赖（至少1个，最多2个）
+            elif task_type == "combined_task":
+                # 对于组合任务，可以有更多并行路径
+                for node_id, node in current_dag.nodes.items():
+                    # 不同类型的任务可以依赖不同类型的任务
+                    if subtask.task_type == "integration":
+                        if node.task_type in ["analysis", "modeling", "code_generation", "data_preparation"]:
+                            possible_dependencies.append(node_id)
+                    elif subtask.task_type in ["analysis", "modeling"]:
+                        if node.task_type in ["data_preparation", "cleaning", "eda"]:
+                            possible_dependencies.append(node_id)
+
+            # 确保至少有一个依赖，但可以有多个
             if possible_dependencies:
-                num_deps = min(2, len(possible_dependencies))
+                # 选择1到所有可能的依赖，以增加并行性
+                num_deps = random.randint(1, min(len(possible_dependencies), 3))  # 最多3个依赖
                 selected_deps = random.sample(possible_dependencies, num_deps)
                 subtask.dependencies = selected_deps
                 print(f"  ✅ 增强依赖关系: 添加 {len(selected_deps)} 个额外依赖")
+            else:
+                # 如果没有找到特定依赖，至少依赖最后一个任务（除非是第一个任务）
+                if current_dag.nodes and last_task_id:
+                    subtask.dependencies = [last_task_id]
 
         return subtask
 
@@ -415,7 +437,7 @@ Main task: {main_task}
 
 Provide the subtask in JSON format with these fields:
 - description: Clear, specific description of the subtask
-- task_type: Type of this subtask (e.g., 'cleaning', 'analysis', 'modeling')
+- task_type: Type of this subtask (e.g., 'cleaning', 'analysis', 'modeling', 'exploration', 'visualization')
 - dependencies: List of SUBTASK IDs this depends on (empty list for first subtask)
   IMPORTANT: A subtask can depend on MULTIPLE previous tasks, not just the last one
 - required_resources: Dictionary of required resources
@@ -427,8 +449,12 @@ CRITICAL INSTRUCTIONS:
 1. SUBTASKS CAN HAVE MULTIPLE DEPENDENCIES - DO NOT LIMIT TO JUST THE LAST TASK
 2. IDENTIFY OPPORTUNITIES FOR PARALLEL EXECUTION WHERE POSSIBLE
 3. FOR EXAMPLE: A 'modeling' task might depend on BOTH 'eda' AND 'data_preparation'
-4. USE EXACT SUBTASK IDs FROM CURRENT PROGRESS FOR DEPENDENCIES
-5. IF UNSURE, PROVIDE A SENSIBLE DEFAULT, BUT ALWAYS ALLOW FOR MULTIPLE DEPENDENCIES
+4. FOR DATA ANALYSIS TASKS: Consider creating parallel paths like:
+   - cleaning → eda → modeling
+   - cleaning → feature_engineering → modeling  
+   - eda & feature_engineering → modeling
+5. USE EXACT SUBTASK IDs FROM CURRENT PROGRESS FOR DEPENDENCIES
+6. IF UNSURE, PROVIDE A SENSIBLE DEFAULT, BUT ALWAYS ALLOW FOR MULTIPLE DEPENDENCIES
 
 Respond ONLY with the JSON, no other text."""
 
