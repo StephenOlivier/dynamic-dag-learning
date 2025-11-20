@@ -328,6 +328,17 @@ class DomainKnowledgeBase:
             required_constraints=["da-constraint-2"]
         ))
 
+        # 添加支持并行执行的规则
+        self.add_rule(ValidationRule(
+            id="da-rule-parallel-1",
+            description="EDA and feature engineering can run in parallel after cleaning",
+            category="domain",
+            domain="data_analysis",
+            severity=SeverityLevel.MEDIUM,
+            check_func=lambda subtask, main, dag, constraints: self._check_da_parallel_paths(subtask, dag),
+            required_constraints=[]
+        ))
+
         self.add_constraint("data_analysis", TaskConstraint(
             id="da-constraint-1",
             description="Data must be cleaned before analysis",
@@ -622,10 +633,32 @@ class DomainKnowledgeBase:
 
     def _check_da_eda_before_modeling(self, subtask: Subtask, dag: SubtaskDAG) -> Tuple[bool, str]:
         if subtask.task_type == "modeling":
-            has_eda = any(node.task_type == "eda" for node in dag.nodes.values())
+            has_eda = any(node.task_type in ["eda", "exploration"] for node in dag.nodes.values())
             if not has_eda:
                 return False, "Modeling requires prior exploratory data analysis"
         return True, "Exploratory analysis precedes modeling"
+
+    def _check_da_parallel_paths(self, subtask: Subtask, dag: SubtaskDAG) -> Tuple[bool, str]:
+        """检查数据分析任务的并行路径是否正确设置"""
+        # 检查是否是EDA或特征工程任务，且依赖于清洗任务
+        if subtask.task_type in ["eda", "exploration", "feature_engineering"]:
+            # 检查是否已有清洗任务
+            has_cleaning = any(node.task_type == "cleaning" for node in dag.nodes.values())
+            
+            if has_cleaning and not subtask.dependencies:
+                # 如果没有依赖关系，建议依赖清洗任务
+                return False, f"{subtask.task_type} should depend on cleaning task for proper parallel execution"
+        
+        # 检查建模任务是否可以依赖多个并行任务
+        if subtask.task_type == "modeling":
+            has_eda = any(node.task_type in ["eda", "exploration"] for node in dag.nodes.values())
+            has_feature_eng = any(node.task_type == "feature_engineering" for node in dag.nodes.values())
+            
+            # 如果有EDA和特征工程任务，建模任务应该依赖两者以实现并行
+            if has_eda and has_feature_eng and len(subtask.dependencies) < 2:
+                return False, "Modeling should depend on both EDA and feature engineering for optimal parallel execution"
+        
+        return True, "Parallel paths correctly structured"
 
     # ===== 代码生成领域特定检查 =====
     def _check_code_requirements_before_impl(self, subtask: Subtask, dag: SubtaskDAG) -> Tuple[bool, str]:

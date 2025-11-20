@@ -40,7 +40,7 @@ class SubtaskPlanner:
 
         print(f"  * 添加{task_type}任务的初始步骤...")
 
-        # 数据分析任务
+        # 数据分析任务 - 创建并行路径
         if task_type == "data_analysis":
             cleaning_task = Subtask(
                 id=self.predictor._generate_subtask_id(),
@@ -54,6 +54,20 @@ class SubtaskPlanner:
             )
             dag.add_subtask(cleaning_task)
             print(f"    - 添加初始步骤: {cleaning_task.description}")
+            
+            # 添加并行的数据探索任务
+            exploration_task = Subtask(
+                id=self.predictor._generate_subtask_id(),
+                description="Explore data structure and basic statistics",
+                task_type="exploration",  # 数据探索任务
+                dependencies=[],  # 与清洗任务并行
+                required_resources={"tools": ["pandas", "numpy"], "data": ["raw_data.csv"]},
+                expected_output="Basic statistics and data structure overview",
+                difficulty=3.0,
+                estimated_time=90.0
+            )
+            dag.add_subtask(exploration_task)
+            print(f"    - 添加并行探索步骤: {exploration_task.description}")
 
         # 翻译任务
         elif task_type == "translation":
@@ -159,7 +173,7 @@ class SubtaskPlanner:
         # 领域特定完成条件
         if task_type == "data_analysis":
             has_cleaning = any("clean" in node.task_type.lower() for node in dag.nodes.values())
-            has_eda = any("eda" in node.task_type.lower() for node in dag.nodes.values())
+            has_eda = any("eda" in node.task_type.lower() or "exploration" in node.task_type.lower() for node in dag.nodes.values())
             has_modeling = any("model" in node.task_type.lower() for node in dag.nodes.values())
             has_report = any("report" in node.task_type.lower() for node in dag.nodes.values())
 
