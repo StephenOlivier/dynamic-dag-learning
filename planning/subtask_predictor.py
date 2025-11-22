@@ -5,7 +5,7 @@ import time
 from typing import Optional, List, Dict, Any, Tuple, TYPE_CHECKING
 import random
 import numpy as np
-from utils.types import Subtask, SubtaskDAG  # 从共享模块导入
+from core.types import Subtask, SubtaskDAG  # 从核心模块导入
 from experience.experience_pool import ExperiencePool, Experience
 from models.llm_manager import LLMManager
 from knowledge.validation_rules import ValidationRule, TaskConstraint

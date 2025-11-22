@@ -1,13 +1,13 @@
 import json
 import time
 from typing import Dict, List, Tuple, Optional, Any, Set
-from dataclasses import dataclass, field
 import networkx as nx
 import matplotlib.pyplot as plt
 from enum import Enum
 import random
 import numpy as np
 from collections import defaultdict
+from core.types import Subtask, SubtaskDAG
 
 
 class SeverityLevel(Enum):
@@ -16,80 +16,6 @@ class SeverityLevel(Enum):
     MEDIUM = "medium"
     LOW = "low"
     INFO = "info"
-
-
-@dataclass
-class Subtask:
-    """子任务数据类，表示DAG中的一个节点"""
-    id: str
-    description: str
-    task_type: str
-    dependencies: List[str] = field(default_factory=list)
-    required_resources: Dict[str, Any] = field(default_factory=dict)
-    expected_output: str = ""
-    difficulty: float = 3.0
-    estimated_time: float = 60.0
-    applied_constraints: List[str] = field(default_factory=list)
-    rule_violations: List[str] = field(default_factory=list)
-    actual_start_time: Optional[float] = None
-    actual_end_time: Optional[float] = None
-    status: str = "pending"  # pending, executing, completed, failed
-    result: Optional[Any] = None
-
-
-@dataclass
-class SubtaskDAG:
-    """子任务有向无环图，表示任务的执行结构"""
-    nodes: Dict[str, Subtask] = field(default_factory=dict)
-    entry_points: List[str] = field(default_factory=list)
-    exit_points: List[str] = field(default_factory=list)
-    constraints: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def add_subtask(self, subtask: Subtask) -> None:
-        """添加子任务到DAG"""
-        self.nodes[subtask.id] = subtask
-        # 更新入口/出口点
-        if not subtask.dependencies:
-            if subtask.id not in self.entry_points:
-                self.entry_points.append(subtask.id)
-        else:
-            if subtask.id in self.entry_points:
-                self.entry_points.remove(subtask.id)
-
-        # 检查是否是出口点
-        is_exit = True
-        for node_id, node in self.nodes.items():
-            if subtask.id in node.dependencies and node_id != subtask.id:
-                is_exit = False
-                break
-        if is_exit and subtask.id not in self.exit_points:
-            self.exit_points.append(subtask.id)
-
-    def validate_dag(self) -> Tuple[bool, str, List[Dict]]:
-        """验证DAG结构的有效性"""
-        return validate_dag_structure(self)
-
-    def get_execution_order(self) -> List[str]:
-        """获取DAG的执行顺序（拓扑排序）"""
-        return get_execution_order(self)
-
-    def compute_critical_path(self) -> Tuple[List[str], float]:
-        """计算DAG的关键路径"""
-        return find_critical_path(self)
-
-    def visualize(self, filename: str = None) -> None:
-        """可视化DAG结构"""
-        visualize_dag(self, filename)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """将DAG转换为字典格式，用于序列化"""
-        return serialize_dag(self)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SubtaskDAG":
-        """从字典数据创建DAG实例"""
-        return deserialize_dag(data)
 
 
 def validate_dag_structure(dag: SubtaskDAG) -> Tuple[bool, str, List[Dict]]:
@@ -347,7 +273,7 @@ def serialize_dag(dag: SubtaskDAG) -> Dict[str, Any]:
         'entry_points': dag.entry_points,
         'exit_points': dag.exit_points,
         'constraints': dag.constraints,
-        'metadata': dag.metadata
+        'metadata': dag.meta  # 注意：这里使用meta而不是metadata
     }
 
 
@@ -385,7 +311,7 @@ def deserialize_dag(data: Dict[str, Any]) -> SubtaskDAG:
         entry_points=data.get('entry_points', []),
         exit_points=data.get('exit_points', []),
         constraints=data.get('constraints', {}),
-        metadata=data.get('metadata', {})
+        meta=data.get('metadata', {})  # 注意：这里使用meta而不是metadata
     )
 
 
@@ -433,7 +359,8 @@ def add_subtask_to_dag(dag: SubtaskDAG, subtask: Subtask) -> bool:
         nodes=test_nodes,
         entry_points=test_entry_points,
         exit_points=test_exit_points,
-        constraints=dag.constraints.copy()
+        constraints=dag.constraints.copy(),
+        meta=dag.meta.copy()
     )
 
     is_valid, _, _ = validate_dag_structure(test_dag)
@@ -549,7 +476,7 @@ def update_subtask_dependencies(dag: SubtaskDAG, subtask_id: str, new_dependenci
 def analyze_dag_parallelism(dag: SubtaskDAG) -> Dict[str, Any]:
     """分析DAG的并行执行潜力"""
     # 计算关键路径
-    critical_path, critical_time = dag.compute_critical_path()
+    critical_path, critical_time = find_critical_path(dag)
 
     # 计算总时间（假设串行执行）
     serial_time = sum(node.estimated_time for node in dag.nodes.values())
@@ -576,112 +503,100 @@ def analyze_dag_parallelism(dag: SubtaskDAG) -> Dict[str, Any]:
     for node_id in dag.nodes:
         # 找出可以同时执行的任务数量
         parallel_count = 1
-        for other_id, other in dag.nodes.items():
-            if node_id != other_id and not _tasks_dependent(node_id, other_id, dag):
-                parallel_count += 1
+        for other_id in dag.nodes:
+            if other_id != node_id:
+                # 检查是否可以与当前任务并行执行
+                # （即它们没有相互依赖）
+                node_deps = set(dag.nodes[node_id].dependencies)
+                other_deps = set(dag.nodes[other_id].dependencies)
+                
+                # 如果任务A依赖于任务B，或B依赖于A，则不能并行执行
+                if node_id not in dag.nodes[other_id].dependencies and \
+                   other_id not in dag.nodes[node_id].dependencies:
+                    # 检查是否有共同依赖
+                    if not (node_deps & other_deps) or all(
+                        nx.has_path(nx.DiGraph([(d, node_id) for d in dag.nodes[node_id].dependencies if d in dag.nodes]), 
+                                   d, node_id) or 
+                        nx.has_path(nx.DiGraph([(d, other_id) for d in dag.nodes[other_id].dependencies if d in dag.nodes]), 
+                                   d, other_id) 
+                        for d in (node_deps & other_deps)
+                    ):
+                        parallel_count += 1
+        
         max_parallelism = max(max_parallelism, parallel_count)
+
+    # 计算潜在加速比（Amdahl's Law的简化版）
+    potential_speedup = serial_time / max(critical_time, 1) if critical_time > 0 else len(dag.nodes)
 
     return {
         "critical_path": critical_path,
         "critical_time": critical_time,
         "serial_time": serial_time,
-        "potential_parallel_groups": dict(parallel_groups),
-        "independent_tasks": independent_tasks,
+        "potential_speedup": min(potential_speedup, len(dag.nodes)),  # 限制在合理范围内
         "max_parallelism": max_parallelism,
-        "potential_speedup": serial_time / critical_time if critical_time > 0 else 1
+        "independent_tasks": independent_tasks,
+        "parallel_groups": dict(parallel_groups),
+        "total_tasks": len(dag.nodes)
     }
 
 
-def _tasks_dependent(task1: str, task2: str, dag: SubtaskDAG) -> bool:
-    """检查两个任务是否有依赖关系"""
-    # 检查task1是否依赖task2
-    if task2 in dag.nodes[task1].dependencies:
-        return True
-
-    # 检查task2是否依赖task1
-    if task1 in dag.nodes[task2].dependencies:
-        return True
-
-    # 检查是否有间接依赖
-    return _has_path(dag, task1, task2) or _has_path(dag, task2, task1)
-
-
-def _has_path(dag: SubtaskDAG, source: str, target: str) -> bool:
-    """检查DAG中是否存在从source到target的路径"""
-    visited = set()
-    queue = [source]
-
-    while queue:
-        node = queue.pop(0)
-        if node == target:
-            return True
-
-        if node in visited:
-            continue
-
-        visited.add(node)
-        # 找出所有当前节点指向的节点（即依赖当前节点的节点）
-        for next_node, n in dag.nodes.items():
-            if node in n.dependencies and next_node not in visited:
-                queue.append(next_node)
-
-    return False
-
-
 def visualize_dag_with_parallelism(dag: SubtaskDAG, filename: str = None) -> None:
-    """可视化DAG结构，突出显示并行执行机会"""
-    try:
-        import matplotlib.pyplot as plt
-        import networkx as nx
+    """使用并行性信息可视化DAG结构"""
+    G = nx.DiGraph()
 
-        G = nx.DiGraph()
+    # 获取并行性分析
+    parallelism = analyze_dag_parallelism(dag)
+    
+    # 添加节点和边
+    for node_id, node in dag.nodes.items():
+        # 根据是否在关键路径上设置不同颜色
+        is_critical = node_id in parallelism["critical_path"]
+        G.add_node(node_id, 
+                   label=f"{node.task_type}\n{node.id}",
+                   size=node.difficulty * 50 + 100,
+                   time=node.estimated_time,
+                   critical=is_critical)
+        for dep in node.dependencies:
+            if dep in dag.nodes and dep != node_id:
+                G.add_edge(dep, node_id)
 
-        # 添加节点
-        for node_id, node in dag.nodes.items():
-            G.add_node(node_id,
-                       label=f"{node_id}\n{node.task_type}",
-                       color="lightblue")
+    # 创建图形
+    plt.figure(figsize=(14, 10))
+    pos = nx.spring_layout(G, k=3, iterations=50)  # 使用spring布局以更好地展示结构
 
-        # 添加边
-        for node_id, node in dag.nodes.items():
-            for dep in node.dependencies:
-                if dep != node_id:  # 避免自环
-                    G.add_edge(dep, node_id)
+    # 分离关键路径节点和普通节点
+    critical_nodes = [n for n, d in G.nodes(data=True) if d['critical']]
+    normal_nodes = [n for n, d in G.nodes(data=True) if not d['critical']]
 
-        # 分析并行性
-        parallelism = analyze_dag_parallelism(dag)
+    # 绘制边
+    nx.draw_networkx_edges(G, pos, alpha=0.5, arrows=True, arrowsize=20)
 
-        # 标记关键路径
-        for i in range(len(parallelism["critical_path"]) - 1):
-            G.edges[parallelism["critical_path"][i], parallelism["critical_path"][i + 1]]['color'] = 'red'
-            G.edges[parallelism["critical_path"][i], parallelism["critical_path"][i + 1]]['width'] = 2.0
+    # 绘制关键路径节点（红色）
+    if critical_nodes:
+        nx.draw_networkx_nodes(G, pos, nodelist=critical_nodes,
+                               node_size=[G.nodes[n]['size'] for n in critical_nodes],
+                               node_color='red', alpha=0.8)
 
-        # 设置布局
-        pos = nx.spring_layout(G, k=0.5, iterations=50)
+    # 绘制普通节点（蓝色）
+    if normal_nodes:
+        nx.draw_networkx_nodes(G, pos, nodelist=normal_nodes,
+                               node_size=[G.nodes[n]['size'] for n in normal_nodes],
+                               node_color='lightblue', alpha=0.8)
 
-        # 绘制节点
-        node_colors = ['lightblue' for _ in G.nodes()]
-        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=2000, alpha=0.8)
+    # 添加标签
+    nx.draw_networkx_labels(G, pos, {n: f"{n[:8]}...\n{G.nodes[n]['time']:.1f}s" 
+                                     for n in G.nodes()}, font_size=8)
 
-        # 绘制边
-        edge_colors = [G[u][v].get('color', 'black') for u, v in G.edges()]
-        edge_widths = [G[u][v].get('width', 1.0) for u, v in G.edges()]
-        nx.draw_networkx_edges(G, pos, edge_color=edge_colors, width=edge_widths,
-                               arrowsize=20, alpha=0.7, connectionstyle='arc3,rad=0.1')
+    # 添加图例
+    plt.plot([], [], 'ro', label='Critical Path', markersize=10)
+    plt.plot([], [], 'bo', label='Normal Task', markersize=10)
+    plt.legend()
 
-        # 添加标签
-        labels = {node: f"{node}\n{dag.nodes[node].task_type}" for node in G.nodes()}
-        nx.draw_networkx_labels(G, pos, labels, font_size=8)
+    plt.title(f'Task DAG Structure\nCritical Path: {parallelism["critical_time"]:.1f}s, '
+              f'Potential Speedup: {parallelism["potential_speedup"]:.2f}x')
 
-        plt.title(
-            f"DAG结构 (关键路径时间: {parallelism['critical_time']:.1f}s, 潜在加速比: {parallelism['potential_speedup']:.2f}x)")
-        plt.axis('off')
-
-        if filename:
-            plt.savefig(filename, dpi=300, bbox_inches='tight')
-            print(f"DAG可视化已保存至: {filename}")
-        else:
-            plt.show()
-
-    except ImportError:
-        print("警告: 无法可视化DAG，缺少matplotlib或networkx库")
+    if filename:
+        plt.savefig(filename, bbox_inches='tight', dpi=300)
+        plt.close()
+    else:
+        plt.show()

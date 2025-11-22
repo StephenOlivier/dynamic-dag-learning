@@ -8,7 +8,7 @@ import difflib
 
 from models.llm_manager import LLMManager
 from knowledge.validation_rules import ValidationRule, TaskConstraint, SeverityLevel, RuleEvidence, ConstraintEvidence
-from utils.types import Subtask, SubtaskDAG
+from core.types import Subtask, SubtaskDAG
 from experience.experience_pool import ExperiencePool, Experience
 
 if TYPE_CHECKING:
