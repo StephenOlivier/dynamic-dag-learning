@@ -8,7 +8,7 @@ from enum import Enum
 import difflib
 
 # from knowledge.validation_rules import ValidationRule, TaskConstraint, SeverityLevel, RuleEvidence, ConstraintEvidence
-# from utils.types import Subtask, SubtaskDAG
+from core.types import Subtask, SubtaskDAG
 # from models.llm_manager import LLMManager
 # _calculate_similarity更改
 

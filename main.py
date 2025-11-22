@@ -144,10 +144,10 @@ def main():
                 print(f"  * 潜在加速比: {parallelism['potential_speedup']:.2f}x")
                 print(f"  * 最大并行度: {parallelism['max_parallelism']}")
 
-                # 生成DAG可视化（在Kaggle环境中保存为文件）
+                # 生成DAG可视化（保存到当前目录）
                 visualize_dag_with_parallelism(
                     dag,
-                    filename=f"/kaggle/working/dag_visualization_task_{i + 1}.png"
+                    filename=f"./dag_visualization_task_{i + 1}.png"
                 )
 
                 print("  * DAG可视化已生成，可在输出文件中查看")
@@ -281,14 +281,14 @@ def main():
 
         # 生成无经验DAG可视化
         visualize_dag_with_parallelism(
-            no_experience_dag,
-            filename="/kaggle/working/no_experience_dag.png"
+            dag_no_exp,
+            filename="./no_experience_dag.png"
         )
 
         # 生成有经验DAG可视化
         visualize_dag_with_parallelism(
-            with_experience_dag,
-            filename="/kaggle/working/with_experience_dag.png"
+            dag_with_exp,
+            filename="./with_experience_dag.png"
         )
 
         print("  * DAG可视化已生成，可在输出文件中比较两种规划的差异")
@@ -343,7 +343,7 @@ def main():
                 # 生成可视化
                 visualize_dag_with_parallelism(
                     exp.subtask_dag,
-                    filename=f"/kaggle/working/recent_experience_dag_{exp.task_id}.png"
+                    filename=f"./recent_experience_dag_{exp.task_id}.png"
                 )
 
         print("\n  * 所有DAG可视化已生成，可在输出文件中查看")

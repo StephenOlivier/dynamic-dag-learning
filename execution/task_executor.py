@@ -3,7 +3,7 @@ import time
 import random
 import numpy as np
 import networkx as nx
-from utils.types import Subtask, SubtaskDAG  # 从共享模块导入
+from core.types import Subtask, SubtaskDAG  # 从核心模块导入
 from models.llm_manager import LLMManager
 from knowledge.validation_rules import ValidationRule, TaskConstraint
 
