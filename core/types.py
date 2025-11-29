@@ -310,6 +310,7 @@ class SubtaskDAG:
                 if node in n.dependencies and next_node not in visited:
                     queue.append(next_node)
 
+
         return False
 
     def get_execution_order(self) -> List[str]:

@@ -136,23 +136,35 @@ def main():
 
             # ===== 调用DAG可视化和分析工具 =====
             try:
+                # 尝试从正确的路径导入
                 from utils.dag_utils import analyze_dag_parallelism, visualize_dag_with_parallelism
-
-                # 分析DAG并行性
-                parallelism = analyze_dag_parallelism(dag)
-                print(f"  * 关键路径时间: {parallelism['critical_time']:.1f}秒")
-                print(f"  * 潜在加速比: {parallelism['potential_speedup']:.2f}x")
-                print(f"  * 最大并行度: {parallelism['max_parallelism']}")
-
-                # 生成DAG可视化（在Kaggle环境中保存为文件）
-                visualize_dag_with_parallelism(
-                    dag,
-                    filename=f"/kaggle/working/dag_visualization_task_{i + 1}.png"
-                )
-
-                print("  * DAG可视化已生成，可在输出文件中查看")
             except ImportError:
-                print("  ⚠️ DAG分析工具不可用，跳过可视化")
+                try:
+                    # 尝试从备用路径导入
+                    from dag_utils import analyze_dag_parallelism, visualize_dag_with_parallelism
+                    print("  ✓ 成功从备用路径导入DAG工具")
+                except ImportError:
+                    print("  ⚠️ DAG分析工具不可用，跳过可视化")
+
+                    # 定义空函数作为回退
+                    def analyze_dag_parallelism(dag):
+                        return {
+                            "critical_path": [],
+                            "critical_time": 0,
+                            "potential_speedup": 1.0,
+                            "max_parallelism": 1
+                        }
+
+                    def visualize_dag_with_parallelism(dag, filename=None):
+                        print(f"  ⚠️ 无法生成可视化，但会保存DAG结构到 {filename}")
+                        # 保存基本DAG信息到文件
+                        if filename:
+                            with open(filename.replace('.png', '.txt'), 'w') as f:
+                                f.write(f"DAG结构 ({len(dag.nodes)} 节点):\n")
+                                for node_id, node in dag.nodes.items():
+                                    f.write(f"- {node_id} [{node.task_type}]: {node.description}\n")
+                                    if node.dependencies:
+                                        f.write(f"  依赖: {', '.join(node.dependencies)}\n")
 
         else:
             print(f"  ❌ DAG规划失败: {status}")

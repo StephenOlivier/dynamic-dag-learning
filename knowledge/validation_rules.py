@@ -127,8 +127,27 @@ class RuleBasedChecker:
     def _initialize_active_rules(self):
         """初始化活跃规则集"""
         all_rules = []
-        for domain, rules in self.kb.domain_rules.items():
-            all_rules.extend(rules)
+
+        # 安全检查：确保 kb 有 get_rules_for_domain 方法
+        if hasattr(self.kb, 'get_rules_for_domain'):
+            try:
+                # 尝试获取通用规则
+                all_rules.extend(self.kb.get_rules_for_domain("general"))
+                # 尝试获取特定领域规则
+                try:
+                    all_rules.extend(self.kb.get_rules_for_domain(self.kb.current_domain))
+                except:
+                    pass
+            except Exception as e:
+                print(f"警告: 获取规则时出错: {e}")
+        else:
+            print("警告: DomainKnowledgeBase 对象缺少 get_rules_for_domain 方法")
+            # 尝试回退到直接访问属性（临时解决方案）
+            if hasattr(self.kb, 'domain_rules'):
+                for domain, rules in self.kb.domain_rules.items():
+                    all_rules.extend(rules)
+            else:
+                print("错误: DomainKnowledgeBase 对象缺少必要的属性")
 
         for rule in all_rules:
             self.active_rules[rule.id] = rule
@@ -144,7 +163,13 @@ class RuleBasedChecker:
     def get_relevant_rules(self, task_type: str, main_task: str,
                            current_dag: Any, top_k: int = 10) -> List[ValidationRule]:
         """获取与当前上下文最相关的规则"""
-        domain_rules = self.kb.get_rules_for_domain(task_type)
+        # 安全访问规则
+        if hasattr(self.kb, 'get_rules_for_domain'):
+            domain_rules = self.kb.get_rules_for_domain(task_type)
+        else:
+            print("警告: 使用回退方法获取规则")
+            domain_rules = self.kb.domain_rules.get("general", []) + \
+                           self.kb.domain_rules.get(task_type, [])
 
         # 从经验池中检索相关经验
         from core.types import Experience
@@ -180,11 +205,39 @@ class RuleBasedChecker:
                 ),
                 exp
             )
+            # 是下面代码的原始形式
+            # for rule_id in exp.applied_rules:
+            #     rule_usage[rule_id]['count'] += 1
+            #     rule_usage[rule_id]['similarity'] = max(rule_usage[rule_id]['similarity'], similarity)
+            #     if rule_id not in exp.violated_rules:
+            #         rule_usage[rule_id]['success'] += 1
 
+
+            # 安全处理applied_rules - 确保rule_id是可哈希的
             for rule_id in exp.applied_rules:
+                # 如果rule_id是列表，转换为元组（可哈希）
+                if isinstance(rule_id, list):
+                    rule_id = tuple(rule_id)
+                # 如果rule_id是其他不可哈希类型，转换为字符串
+                elif not isinstance(rule_id, (str, int, float, tuple)):
+                    rule_id = str(rule_id)
+
                 rule_usage[rule_id]['count'] += 1
                 rule_usage[rule_id]['similarity'] = max(rule_usage[rule_id]['similarity'], similarity)
-                if rule_id not in exp.violated_rules:
+
+                # 安全检查violated_rules
+                is_violated = False
+                for violated in exp.violated_rules:
+                    if isinstance(violated, list):
+                        violated = tuple(violated)
+                    elif not isinstance(violated, (str, int, float, tuple)):
+                        violated = str(violated)
+
+                    if rule_id == violated:
+                        is_violated = True
+                        break
+
+                if not is_violated:
                     rule_usage[rule_id]['success'] += 1
 
         # 计算规则评分

@@ -253,7 +253,7 @@ class ExperiencePool:
                     all_task_texts.append(exp.prompt)
 
         # 需要至少5个任务才能有效训练TF-IDF
-        if len(all_task_texts) >= 5:
+        if len(all_task_texts) >= 3:
             success = self.llm_manager.embedding_manager.fit_tfidf_vectorizer(all_task_texts)
             if success:
                 self._tfidf_fitted = True
@@ -261,7 +261,7 @@ class ExperiencePool:
             else:
                 print("✗ TF-IDF模型拟合失败")
         elif all_task_texts:
-            print(f"⚠️ 任务数量不足({len(all_task_texts)}/5)，跳过TF-IDF拟合")
+            print(f"⚠️ 任务数量不足({len(all_task_texts)}/3)，跳过TF-IDF拟合")
         else:
             print("⚠️ 没有任务文本可用于训练TF-IDF模型")
 
@@ -302,11 +302,31 @@ class ExperiencePool:
                     exp1.prompt if hasattr(exp1, 'prompt') and exp1.prompt else "",
                     exp2.prompt if hasattr(exp2, 'prompt') and exp2.prompt else ""
                 ])
-                if cosine_similarity is not None:
+                # 安全计算余弦相似度 - 不依赖外部导入
+                try:
+                    # 尝试使用sklearn的cosine_similarity
+                    from sklearn.metrics.pairwise import cosine_similarity
                     tfidf_similarity = cosine_similarity(tfidf_matrix[0], tfidf_matrix[1])[0][0]
+                except (ImportError, NameError):
+                    # 如果cosine_similarity不可用，使用手动计算
+                    vec1 = tfidf_matrix[0].toarray()[0]
+                    vec2 = tfidf_matrix[1].toarray()[0]
+                    dot_product = np.dot(vec1, vec2)
+                    norm1 = np.linalg.norm(vec1)
+                    norm2 = np.linalg.norm(vec2)
+                    if norm1 > 0 and norm2 > 0:
+                        tfidf_similarity = dot_product / (norm1 * norm2)
+                    else:
+                        tfidf_similarity = 0.0
+
             except Exception as e:
                 print(f"TF-IDF相似度计算错误: {e}")
                 tfidf_similarity = 0.0
+
+        #难度相似度
+        difficulty_similarity = 1.0
+        if hasattr(exp1, 'difficulty') and hasattr(exp2, 'difficulty'):
+            difficulty_similarity = 1 - abs(exp1.difficulty - exp2.difficulty) / max(exp1.difficulty, exp2.difficulty, 1e-5)
 
         # 4. 任务类型相似度
         type_similarity = 1.0
@@ -332,13 +352,38 @@ class ExperiencePool:
                                       max(sum(type_count1.values()), sum(type_count2.values()), 1)
                 dag_similarity = type_similarity_val
 
+        # 6. 规则相似度 - 添加安全处理
+        rule_similarity = 0.0
+        if hasattr(exp1, 'applied_rules') and hasattr(exp2, 'applied_rules'):
+            # 安全转换规则ID为可哈希格式
+            def normalize_rules(rules):
+                normalized = []
+                for rule in rules:
+                    if isinstance(rule, list):
+                        normalized.append(tuple(rule))
+                    elif not isinstance(rule, (str, int, float, tuple)):
+                        normalized.append(str(rule))
+                    else:
+                        normalized.append(rule)
+                return normalized
+
+            rules1 = normalize_rules(exp1.applied_rules)
+            rules2 = normalize_rules(exp2.applied_rules)
+
+            if rules1 and rules2:
+                common_rules = set(rules1) & set(rules2)
+                rule_similarity = len(common_rules) / max(len(rules1), len(rules2), 1)
+
         # 综合相似度 (权重根据可用性调整)
+        # 权重分配 - 纳入TF-IDF
         weights = {
-            'text': 0.25,
-            'vector': 0.20 if vector_similarity > 0 else 0,
-            'tfidf': 0.25 if self.llm_manager.embedding_manager.is_tfidf_ready() else 0,
+            'text': 0.15,
+            'vector': 0.15,
+            'tfidf': 0.25,
             'type': 0.15,
-            'dag': 0.15
+            'difficulty': 0.05,
+            'dag': 0.15,
+            'rule': 0.10
         }
 
         # 调整权重使总和为1
@@ -353,7 +398,9 @@ class ExperiencePool:
                 weights['vector'] * vector_similarity +
                 weights['tfidf'] * tfidf_similarity +
                 weights['type'] * type_similarity +
-                weights['dag'] * dag_similarity
+                weights['difficulty'] * difficulty_similarity +
+                weights['dag'] * dag_similarity +
+                weights['rule'] * rule_similarity
         )
 
         return weighted_similarity
@@ -458,36 +505,36 @@ class ExperiencePool:
     #
     #         dag_similarity = 0.4 * type_similarity_val + 0.3 * node_ratio + 0.3 * success_pattern
 
-        # 7. 规则相似度
-        rule_similarity = 0.0
-        if hasattr(exp1, 'applied_rules') and hasattr(exp2, 'applied_rules') and \
-           exp1.applied_rules and exp2.applied_rules:
-            common_rules = set(exp1.applied_rules) & set(exp2.applied_rules)
-            rule_similarity = len(common_rules) / max(len(exp1.applied_rules), len(exp2.applied_rules), 1)
-
-        # 权重分配 - 纳入TF-IDF
-        weights = {
-            'text': 0.15,
-            'vector': 0.15,
-            'tfidf': 0.25,
-            'type': 0.15,
-            'difficulty': 0.05,
-            'dag': 0.15,
-            'rule': 0.10
-        }
-
-        # 计算加权相似度
-        weighted_similarity = (
-                weights['text'] * text_similarity +
-                weights['vector'] * vector_similarity +
-                weights['tfidf'] * tfidf_similarity +
-                weights['type'] * type_similarity +
-                weights['difficulty'] * difficulty_similarity +
-                weights['dag'] * dag_similarity +
-                weights['rule'] * rule_similarity
-        )
-
-        return weighted_similarity
+        # # 7. 规则相似度
+        # rule_similarity = 0.0
+        # if hasattr(exp1, 'applied_rules') and hasattr(exp2, 'applied_rules') and \
+        #    exp1.applied_rules and exp2.applied_rules:
+        #     common_rules = set(exp1.applied_rules) & set(exp2.applied_rules)
+        #     rule_similarity = len(common_rules) / max(len(exp1.applied_rules), len(exp2.applied_rules), 1)
+        #
+        # # 权重分配 - 纳入TF-IDF
+        # weights = {
+        #     'text': 0.15,
+        #     'vector': 0.15,
+        #     'tfidf': 0.25,
+        #     'type': 0.15,
+        #     'difficulty': 0.05,
+        #     'dag': 0.15,
+        #     'rule': 0.10
+        # }
+        #
+        # # 计算加权相似度
+        # weighted_similarity = (
+        #         weights['text'] * text_similarity +
+        #         weights['vector'] * vector_similarity +
+        #         weights['tfidf'] * tfidf_similarity +
+        #         weights['type'] * type_similarity +
+        #         weights['difficulty'] * difficulty_similarity +
+        #         weights['dag'] * dag_similarity +
+        #         weights['rule'] * rule_similarity
+        # )
+        #
+        # return weighted_similarity
 
     def _find_related_tasks(self, experience: 'Experience', threshold: float = 0.6) -> List[int]:
         related = []
@@ -543,6 +590,24 @@ class ExperiencePool:
     def add_experience(self, experience: Experience) -> None:
         """添加经验到经验池"""
         task_type = experience.task_type
+
+        # 确保规则ID是字符串列表
+        if not isinstance(experience.applied_rules, list):
+            experience.applied_rules = []
+        else:
+            # 转换任何非字符串规则ID
+            experience.applied_rules = [
+                str(rule) if not isinstance(rule, str) else rule
+                for rule in experience.applied_rules
+            ]
+
+        if not isinstance(experience.violated_rules, list):
+            experience.violated_rules = []
+        else:
+            experience.violated_rules = [
+                str(rule) if not isinstance(rule, str) else rule
+                for rule in experience.violated_rules
+            ]
 
         # 生成嵌入向量（如果缺失）
         if not experience.embeddings:

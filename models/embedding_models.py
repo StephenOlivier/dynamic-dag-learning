@@ -32,7 +32,7 @@ class EmbeddingConfig:
     model_name: str = 'all-MiniLM-L6-v2'
     max_features: int = 1000
     ngram_range: tuple = (1, 2)
-    min_df: int = 2
+    min_df: int = 1
     stop_words: Optional[str] = 'english'
     fallback_dim: int = 100
 
@@ -85,20 +85,58 @@ class LocalEmbeddingManager:
             self.tfidf_vectorizer = None
 
     def fit_tfidf_vectorizer(self, texts: List[str]):
-        """使用历史任务文本训练TF-IDF模型"""
+        """使用历史任务文本训练TF-IDF模型，添加自适应min_df逻辑"""
         if self.tfidf_vectorizer is None or not texts:
             return False
 
         try:
             print(f"使用 {len(texts)} 个历史任务训练TF-IDF模型...")
+
+            # 动态调整min_df - 如果文档太少，降低min_df
+            if len(texts) < 5:
+                # 对于少量文档，允许术语只出现在一个文档中
+                adjusted_min_df = 1
+            elif len(texts) < 10:
+                adjusted_min_df = max(1, int(len(texts) * 0.1))
+            else:
+                adjusted_min_df = self.config.min_df
+
+            print(f"  * 自适应min_df: {adjusted_min_df} (基于 {len(texts)} 个任务)")
+
+            # 重新初始化TF-IDF向量化器（如果需要）
+            if adjusted_min_df != self.tfidf_vectorizer.min_df:
+                self.tfidf_vectorizer = TfidfVectorizer(
+                    max_features=self.config.max_features,
+                    stop_words=self.config.stop_words,
+                    ngram_range=self.config.ngram_range,
+                    min_df=adjusted_min_df
+                )
+
+            # 训练模型
             self.tfidf_vectorizer.fit(texts)
             self.is_tfidf_fitted = True
-            print("TF-IDF模型训练完成！")
+            print(f"TF-IDF模型训练完成! 词汇表大小: {len(self.tfidf_vectorizer.vocabulary_)}")
             return True
         except Exception as e:
             print(f"TF-IDF模型训练失败: {e}")
-            self.is_tfidf_fitted = False
-            return False
+
+            # 尝试简化配置
+            try:
+                print("  * 尝试使用更简单的配置重新训练...")
+                self.tfidf_vectorizer = TfidfVectorizer(
+                    max_features=min(500, self.config.max_features),
+                    stop_words=None,  # 禁用停用词
+                    ngram_range=(1, 1),  # 只使用单个词
+                    min_df=1  # 必须设置为1
+                )
+                self.tfidf_vectorizer.fit(texts)
+                self.is_tfidf_fitted = True
+                print(f"✓ 使用简化配置成功训练TF-IDF模型! 词汇表大小: {len(self.tfidf_vectorizer.vocabulary_)}")
+                return True
+            except Exception as e2:
+                print(f"  * 简化配置训练也失败: {e2}")
+                self.is_tfidf_fitted = False
+                return False
 
     def is_tfidf_ready(self) -> bool:
         """检查TF-IDF是否已准备好使用"""
